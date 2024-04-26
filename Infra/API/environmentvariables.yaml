@@ -1,0 +1,11 @@
+ldap:
+  URI: ldap://master-node:389
+  binddn: cn=admin,dc=master,dc=com
+  domain: dc=master,dc=com
+  user_search_base: ou=users,dc=master,dc=com
+  group_search_base: ou=groups,dc=master,dc=com
+
+cluster:
+  bash_path: /home/wakeb/Big-Data-Platform/Infra/bash_files
+  creds_path: /home/wakeb/Big-Data-Platform/Infra/bash_files/credentials.env
+  config_auto_path: /home/wakeb/Big-Data-Platform/Infra/config_automation

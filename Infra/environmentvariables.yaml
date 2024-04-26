@@ -1,0 +1,68 @@
+airflow:
+  conf_path: /usr/local/airflow/
+general:
+  number_of_nodes: 2
+  hadoop_cluster: /usr/local/hadoopcluster
+hadoop:
+  conf_path: /hadoop-3.3.5/etc/hadoop/
+  pid_path: /temp/hadoopPID
+prometheus:
+  prom_path: /prometheus-2.48.0-rc.0.linux-amd64/
+  node_exporter_path: /node_exporter-1.6.1.linux-amd64/
+spark:
+  spark_path: /spark-3.4.3-bin-hadoop3/
+hive:
+  conf_path: /apache-hive-3.1.3-bin/conf/
+ranger:
+  ranger_admin: /ranger/target/ranger-3.0.0-SNAPSHOT-admin/
+  ranger_hdfs: /ranger/target/ranger-3.0.0-SNAPSHOT-hdfs-plugin/
+  ranger_hive: /ranger/target/ranger-3.0.0-SNAPSHOT-hive-plugin/
+  ranger_usersync: /ranger/target/ranger-3.0.0-SNAPSHOT-usersync/
+  admin_pass: Cofo#413
+  binddn: cn=admin,dc=master,dc=com
+  bindpass: cofowakeb
+  search_base: dc=master,dc=com
+  user_search_base: ou=users,dc=master,dc=com
+  group_search_base: ou=groups,dc=master,dc=com
+  search_scope: sub
+  mysql_root_password: cofowakeb
+  db_user: cofo
+
+hostnames:
+  master-node: ''
+  slave-node1: ''
+  # slave-node2: ''
+hosturls:
+  master-node: master-public
+  slave-node1: worker-public1
+  # slave-node2: worker-public2
+java:
+  home: /usr/lib/jvm/java-8-openjdk-amd64
+kafka:
+  conf_path: /kafka_2.12-3.4.0/config/
+  myid_path: /temp/zookeeper
+mysql:
+  airflowdatabase: airflow_results
+  hivedatabase: cofowakeb
+  password: cofowakeb
+  username: cofo
+nifi:
+  conf_path: /nifi-1.22.0/conf/
+ssh:
+  private_key_path: /home/master/.ssh/id_rsa
+  remote_port: 22
+  remote_username: master
+  group: cluster
+  pass: master
+
+ldap:
+  URI: ldap://master-node:389
+  binddn: cn=admin,dc=master,dc=com
+  domain: dc=master,dc=com
+  user_search_base: ou=users,dc=master,dc=com
+  group_search_base: ou=groups,dc=master,dc=com
+
+cluster:
+  bash_path: /home/wakeb/Big-Data-Platform/Infra/bash_files
+  creds_path: /home/wakeb/Big-Data-Platform/Infra/bash_files/credentials.env
+  config_auto_path: /home/wakeb/Big-Data-Platform/Infra/config_automation

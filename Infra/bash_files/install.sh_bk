@@ -1,0 +1,302 @@
+#!/bin/bash
+
+# import credentials and env variables
+source credentials.env
+
+# List of new hosts ips
+new_hosts=()
+new_host_names=()
+
+# list of all hosts ips with their names
+hosts_list=""
+
+# to be updated
+merged_machines_ips=()
+num_of_fixed_nodes=0
+num_of_new_nodes=0
+total_num_of_nodes=0
+#  _______  _______  _______           _______  _______  _       _________ _______ 
+# (  ___  )(  ____ )(  ____ \|\     /|(       )(  ____ \( (    /|\__   __/(  ____ \
+# | (   ) || (    )|| (    \/| )   ( || () () || (    \/|  \  ( |   ) (   | (    \/
+# | (___) || (____)|| |      | |   | || || || || (__    |   \ | |   | |   | (_____ 
+# |  ___  ||     __)| | ____ | |   | || |(_)| ||  __)   | (\ \) |   | |   (_____  )
+# | (   ) || (\ (   | | \_  )| |   | || |   | || (      | | \   |   | |         ) |
+# | )   ( || ) \ \__| (___) || (___) || )   ( || (____/\| )  \  |   | |   /\____) |
+# |/     \||/   \__/(_______)(_______)|/     \|(_______/|/    )_)   )_(   \_______)
+
+function read_args(){
+    if [ "$#" -eq 0 ]; then
+        echo "No arguments provided"
+    else
+        for ((i = 1; i <= $#; i++)); do
+            new_hosts+=("${!i}")
+        done
+        echo "New hosts: ${new_hosts[@]}"
+        echo "Number of new hosts: ${#new_hosts[@]}"
+    fi
+}
+
+#  _______  _______                 _        _______          
+# (  ____ \(  ____ \|\     /|      | \    /\(  ____ \|\     /|
+# | (    \/| (    \/| )   ( |      |  \  / /| (    \/( \   / )
+# | (_____ | (_____ | (___) |      |  (_/ / | (__     \ (_) / 
+# (_____  )(_____  )|  ___  |      |   _ (  |  __)     \   /  
+#       ) |      ) || (   ) |      |  ( \ \ | (         ) (   
+# /\____) |/\____) || )   ( |      |  /  \ \| (____/\   | |   
+# \_______)\_______)|/     \|      |_/    \/(_______/   \_/   
+
+
+function gen_ssh_key(){
+    # Generate SSH key 
+    # generate only if the key doesn't exist
+    if [ ! -f ~/.ssh/id_rsa ]; then
+        echo "$extpass" | sudo -S apt install sshpass 
+        yes y | ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N ''
+    fi
+}
+
+function copy_id(){
+    # Copy SSH key to all nodes
+    # if their is no new nodes, copy it to all nodes , otherwise copy it to the new nodes only
+    if [ "$num_of_fixed_nodes" -eq "$total_num_of_nodes" ]; then
+        for ((i = 0; i < total_num_of_nodes; i++))
+        do
+            echo "White listing ip ${merged_machines_ips[$i]}..."
+            sshpass -p "$password" ssh-copy-id -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "$unix_user@${merged_machines_ips[$i]}"
+        done
+    else
+        for ((i = num_of_fixed_nodes; i < total_num_of_nodes; i++))
+        do
+            echo "White listing ip ${merged_machines_ips[$i]}..."
+            sshpass -p "$password" ssh-copy-id -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "$unix_user@${merged_machines_ips[$i]}"
+        done
+    fi
+}
+
+function copy_ssh_key(){
+    for ((i = 0; i < total_num_of_nodes; i++))
+    do
+        echo "Copying SSH key to ${merged_machines_ips[$i]}..."
+        scp -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ~/.ssh/id_rsa "$unix_user@${merged_machines_ips[$i]}:~/.ssh"
+    done
+}
+
+                       
+#           _______  _______ _________ _______          _______ _________ _        _______  _______ 
+# |\     /|(  ___  )(  ____ \\__   __/(  ____ \        (  ____ \\__   __/( \      (  ____ \(  ____ \
+# | )   ( || (   ) || (    \/   ) (   | (    \/        | (    \/   ) (   | (      | (    \/| (    \/
+# | (___) || |   | || (_____    | |   | (_____         | (__       | |   | |      | (__    | (_____ 
+# |  ___  || |   | |(_____  )   | |   (_____  )        |  __)      | |   | |      |  __)   (_____  )
+# | (   ) || |   | |      ) |   | |         ) |        | (         | |   | |      | (            ) |
+# | )   ( || (___) |/\____) |   | |   /\____) |        | )      ___) (___| (____/\| (____/\/\____) |
+# |/     \|(_______)\_______)   )_(   \_______)        |/       \_______/(_______/(_______/\_______)
+                                                                                                  
+# these steps will be done on all nodes (old and new)
+                                 
+
+function create_hosts_file(){
+
+    # add the master node to the list of hosts
+    master_private_host="${merged_machines_ips[0]} ${master_node}"
+    master_public_host="${merged_machines_ips[0]} ${master_public}"
+
+    hosts_list+="\n${master_private_host}"
+    hosts_list+="\n${master_public_host}"
+
+    # add slave nodes to the list of hosts
+    for ((i = 1; i < total_num_of_nodes; i++))
+    do
+        private_host="${merged_machines_ips[$i]} ${private_slave_prefix}$i"
+        public_host="${merged_machines_ips[$i]} ${public_slave_prefix}$i"
+        hosts_list+="\n${private_host}"
+        hosts_list+="\n${public_host}"
+
+    done
+}
+
+function update_hosts_files() {
+    for ((i = 0; i < total_num_of_nodes; i++))
+    do  
+        echo "Connecting to ${merged_machines_ips[$i]}..."
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "$unix_user@${merged_machines_ips[$i]}" "
+            printf '%s\n' '$password' | sudo -S sed -i '/node/d' /etc/hosts
+            printf '%s\n' '$password' | sudo -S sed -i '/public/d' /etc/hosts
+            # append private and public IPs to /etc/hosts
+            echo -e \"$hosts_list\" | sudo -S tee -a /etc/hosts
+        "
+    done
+}
+
+function update_new_host_names(){
+    for ((i=num_of_fixed_nodes; i < total_num_of_nodes; i++))
+    do
+        new_host_names+=("${public_slave_prefix}$i")
+    done
+}
+
+function install_initial_packages(){
+
+    if [ "$num_of_fixed_nodes" -eq "$total_num_of_nodes" ]; then
+        for ((i = 0; i < total_num_of_nodes; i++))
+        do
+            echo "Installing initial packages on ${merged_machines_ips[$i]}..."
+            ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "$unix_user@${merged_machines_ips[$i]}" "
+                printf '%s\n' '$password' | sudo -S apt-get update -y
+                printf '%s\n' '$password' | sudo -S apt-get upgrade -y
+                printf '%s\n' '$password' | sudo -S apt-get install -y expect
+                printf '%s\n' '$password' | sudo -S apt-get install -y ansible
+            "
+        done
+    else
+        for ((i = num_of_fixed_nodes; i < total_num_of_nodes; i++))
+        do
+            echo "Installing initial packages on ${merged_machines_ips[$i]}..."
+            ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "$unix_user@${merged_machines_ips[$i]}" "
+                printf '%s\n' '$password' | sudo -S apt-get update -y
+                printf '%s\n' '$password' | sudo -S apt-get upgrade -y
+                printf '%s\n' '$password' | sudo -S apt-get install -y expect
+                printf '%s\n' '$password' | sudo -S apt-get install -y ansible
+            "
+        done
+    fi
+}
+
+
+#  _______  _        _______  _        _______        _______  _______  ______   _______ 
+# (  ____ \( \      (  ___  )( (    /|(  ____ \      (  ____ \(  ___  )(  __  \ (  ____ \
+# | (    \/| (      | (   ) ||  \  ( || (    \/      | (    \/| (   ) || (  \  )| (    \/
+# | |      | |      | |   | ||   \ | || (__          | |      | |   | || |   ) || (__    
+# | |      | |      | |   | || (\ \) ||  __)         | |      | |   | || |   | ||  __)   
+# | |      | |      | |   | || | \   || (            | |      | |   | || |   ) || (      
+# | (____/\| (____/\| (___) || )  \  || (____/\      | (____/\| (___) || (__/  )| (____/\
+# (_______/(_______/(_______)|/    )_)(_______/      (_______/(_______)(______/ (_______/
+
+function clone_code(){    
+
+    MODIFIED_URL="https://${github_repo_token}@${github_repo_url}"
+    if [ "$num_of_fixed_nodes" -eq "$total_num_of_nodes" ]; then
+        for ((i = 0; i < total_num_of_nodes; i++))
+        do
+            echo "Cloning code to ${merged_machines_ips[$i]}..."
+            ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "$unix_user@${merged_machines_ips[$i]}" "
+                echo '$password' | sudo -S git clone '$MODIFIED_URL' '${github_repo_dist}' && echo '$password' | sudo -S chown -R '$unix_user':'$unix_group' '${github_repo_dist}'
+            "
+        done
+    else
+        for ((i = num_of_fixed_nodes; i < total_num_of_nodes; i++))
+        do
+            echo "Cloning code to ${merged_machines_ips[$i]}..."
+            ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "$unix_user@${merged_machines_ips[$i]}" "
+                echo '$password' | sudo -S git clone '$MODIFIED_URL' '${github_repo_dist}' && echo '$password' | sudo -S chown -R '$unix_user':'$unix_group' '${github_repo_dist}'
+            "
+        done
+    fi
+
+}          
+
+function create_and_move_inventory_file(){
+
+    chmod +x generate_inventory.sh
+    ./generate_inventory.sh
+    echo "Copying inventory file to master node..."
+    scp -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa inventory.ini "$unix_user@${master_public}:$inventory_file_path"
+    echo "Copying inventory file to all nodes..."
+    for ((i = 1; i < total_num_of_nodes; i++))
+    do
+        scp -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa inventory.ini "$unix_user@${public_slave_prefix}$i:$inventory_file_path"
+    done
+}
+
+function move_credentials_file(){
+    echo "Copying credentials file to master node..."
+    scp -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa credentials.env "$unix_user@${master_public}:$credentials_file_path"
+    echo "Copying credentials file to all nodes..."
+    for ((i = 1; i < total_num_of_nodes; i++))
+    do
+        scp -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa credentials.env "$unix_user@${public_slave_prefix}$i:$credentials_file_path"
+    done
+}
+
+#           _______  _______  _                _______ _________ _        _______  _______ 
+# |\     /|(  ___  )(       )( \              (  ____ \\__   __/( \      (  ____ \(  ____ \
+# ( \   / )| (   ) || () () || (              | (    \/   ) (   | (      | (    \/| (    \/
+#  \ (_) / | (___) || || || || |              | (__       | |   | |      | (__    | (_____ 
+#   \   /  |  ___  || |(_)| || |              |  __)      | |   | |      |  __)   (_____  )
+#    ) (   | (   ) || |   | || |              | (         | |   | |      | (            ) |
+#    | |   | )   ( || )   ( || (____/\        | )      ___) (___| (____/\| (____/\/\____) |
+#    \_/   |/     \||/     \|(_______/        |/       \_______/(_______/(_______/\_______)
+                                                                                         
+function run_ansible_master(){  
+
+    SCALING_PATH="$main_directory/Big-Data-Platform/Infra/config_automation"
+    ANSIBLE_HOME="$main_directory/Big-Data-Platform/Infra"
+
+    if [ "$num_of_fixed_nodes" -eq "$total_num_of_nodes" ]; then
+
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "$unix_user@${machines_ips[0]}" "
+            cd $SCALING_PATH
+            echo 'python3 add_scaling.py ${new_host_names[@]}'
+            python3 add_scaling.py ${new_host_names[@]}
+            cd $ANSIBLE_HOME
+            ansible-playbook -i inventory.ini install_packages.yaml
+            ansible-playbook -i inventory.ini openldap.yaml
+            ansible-playbook -i inventory.ini Master-Node-tools.yaml
+            ansible-playbook -i inventory.ini download_tools.yaml
+            ansible-playbook -i inventory.ini run_python_scripts.yaml
+            chmod +x bash_files/run_services.sh
+            bash_files/run_services.sh ${new_host_names[@]}
+        "  
+    else
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "$unix_user@${machines_ips[0]}" "
+            cd $SCALING_PATH
+            echo 'python3 add_scaling.py ${new_host_names[@]}'
+            python3 add_scaling.py ${new_host_names[@]}
+            cd $ANSIBLE_HOME
+            ansible-playbook -i inventory.ini install_packages.yaml
+            ansible-playbook -i inventory.ini openldap.yaml
+            ansible-playbook -i inventory.ini download_tools.yaml
+            ansible-playbook -i inventory.ini run_python_scripts.yaml
+            chmod +x bash_files/run_services.sh
+            bash_files/run_services.sh ${new_host_names[@]}
+        "  
+    fi
+}
+
+
+#  _______ _________ _______  _______ _________   _______ _________ _______  _______  _       _________ _        _______ 
+# (  ____ \\__   __/(  ___  )(  ____ )\__   __/  (  ____ )\__   __/(  ____ )(  ____ \( \      \__   __/( (    /|(  ____ \
+# | (    \/   ) (   | (   ) || (    )|   ) (     | (    )|   ) (   | (    )|| (    \/| (         ) (   |  \  ( || (    \/
+# | (_____    | |   | (___) || (____)|   | |     | (____)|   | |   | (____)|| (__    | |         | |   |   \ | || (__    
+# (_____  )   | |   |  ___  ||     __)   | |     |  _____)   | |   |  _____)|  __)   | |         | |   | (\ \) ||  __)   
+#       ) |   | |   | (   ) || (\ (      | |     | (         | |   | (      | (      | |         | |   | | \   || (      
+# /\____) |   | |   | )   ( || ) \ \__   | |     | )      ___) (___| )      | (____/\| (____/\___) (___| )  \  || (____/\
+# \_______)   )_(   |/     \||/   \__/   )_(     |/       \_______/|/       (_______/(_______/\_______/|/    )_)(_______/
+                                                                                                                      
+
+read_args "$@"
+
+
+########################################## Computed variables ##########################################
+# Merged lists 
+merged_machines_ips=("${machines_ips[@]}" "${new_hosts[@]}")
+# nodes count for further use
+num_of_fixed_nodes=${#machines_ips[@]}
+num_of_new_nodes=${#new_hosts[@]}
+total_num_of_nodes=${#merged_machines_ips[@]}
+echo "Total number of nodes: $total_num_of_nodes"
+
+
+gen_ssh_key
+copy_id
+copy_ssh_key
+create_hosts_file
+update_hosts_files
+update_new_host_names
+
+echo "New hosts names: ${new_host_names[@]}"
+
+install_initial_packages
+clone_code
+create_and_move_inventory_file
+move_credentials_file
+run_ansible_master

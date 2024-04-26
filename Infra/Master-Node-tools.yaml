@@ -1,0 +1,342 @@
+---
+- name: Install MySQL and Configure
+  hosts: Master_Node
+  become: yes
+  become_method: sudo
+  vars:
+    user: "{{ unix_user }}"
+    ansible_become_pass: "{{ password }}"
+
+  tasks:
+    - name: Install Python 3 MySQL client library
+      apt:
+        name: python3-pymysql
+        state: latest
+      become: yes
+      when: ansible_python.version.major == 3
+      
+    - name: Install MySQL Server
+      apt:
+        name: mysql-server
+        state: latest
+      register: mysql_install_result
+
+    - name: Configure MySQL bind-address
+      ansible.builtin.lineinfile:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        regexp: '^bind-address\s+=\s+127.0.0.1'
+        line: 'bind-address            = 0.0.0.0'
+      become: yes
+      when: mysql_install_result is succeeded
+
+    - name: Add MySQL socket configuration
+      replace:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        regexp: '^# socket\s*=\s*/var/run/mysqld/mysqld.sock'
+        replace: 'socket        = /var/run/mysqld/mysqld.sock'
+      become: yes
+      when: mysql_install_result is succeeded
+
+    - name: Add MySQL port configuration
+      replace:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        regexp: '^# port\s*=\s*3306'
+        replace: 'port          = 3306'
+      become: yes
+      when: mysql_install_result is succeeded
+
+    - name: Restart MySQL service
+      service:
+        name: mysql
+        state: restarted
+      become: yes
+      when: mysql_install_result is succeeded
+      register: restarted_mysql
+
+    - name: Set MySQL root password for all hosts
+      mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        host: "%"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      when: mysql_install_result is succeeded
+      
+    - name: Grant all privileges to the MySQL root user
+      mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        priv: "*.*:ALL,GRANT"
+        host: "%"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      when: restarted_mysql
+
+    - name: Create MySQL user
+      mysql_user:
+        name: "{{ mysql_user }}"
+        password: "{{ mysql_user_password }}"
+        priv: '*.*:ALL,GRANT'
+        state: present
+        host: "%"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      when: mysql_install_result is succeeded
+      register: mysql_user_result
+
+    - name: Create MySQL databases and grant privileges to the user
+      block:
+        - name: Create and grant privileges for cofowakeb database
+          mysql_db:
+            name: "{{ mysql_hivedatabase }}"
+            state: present
+            login_host: "%"
+            login_unix_socket: /var/run/mysqld/mysqld.sock
+          register: mysql_hivedatabase_result
+          when: mysql_user_result is defined and mysql_user_result is succeeded
+
+        - name: Create and grant privileges for airflow_results database
+          mysql_db:
+            name: "{{ mysql_airflowdatabase }}"
+            state: present
+            login_host: "%"
+            login_unix_socket: /var/run/mysqld/mysqld.sock
+          register: mysql_airflowdatabase_result
+          when: mysql_user_result is defined and mysql_user_result is succeeded
+
+    - name: Grant all privileges to the cofo user for cofowakeb database
+      mysql_user:
+        name: "{{ mysql_user }}"
+        password: "{{ mysql_user_password }}"
+        priv: '*.*:ALL,GRANT'
+        host: "%"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      when: mysql_user_result is defined and mysql_user_result is succeeded
+
+    - name: Grant all privileges to the cofo user for airflow_results database
+      mysql_user:
+        name: "{{ mysql_user }}"
+        password: "{{ mysql_user_password }}"
+        priv: '*.*:ALL,GRANT'
+        host: "%"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      when: mysql_user_result is defined and mysql_user_result is succeeded
+      register: airflow_privileges_result
+      
+- name: Run InfluxDB setup
+  hosts: Master_Node
+  become: true
+  become_method: sudo
+  vars:
+    ansible_become_pass: "{{ password }}"
+    influx_setup_script: "/usr/bin/influx setup --username {{ influx_username }} --password {{ influx_password }} --org {{ influx_org }} --bucket {{ influx_bucket }} --retention 0 --force --name {{ influx_config }}  --token {{ influx_token }}"
+  tasks:
+    - name: Download InfluxDB package
+      get_url:
+        url: https://dl.influxdata.com/influxdb/releases/influxdb2-2.7.1-amd64.deb
+        dest: /tmp/influxdb2-2.7.1-amd64.deb
+
+    - name: Download InfluxData archive key
+      get_url:
+        url: https://repos.influxdata.com/influxdata-archive_compat.key
+        dest: /tmp/influxdata-archive_compat.key
+
+    - name: Verify the checksum of the key
+      shell: echo '393e8779c89ac8d958f81f942f9ad7fb82a25e133faddaf92e15b16e6ac9ce4c /tmp/influxdata-archive_compat.key' | sha256sum -c
+      register: checksum_result
+      changed_when: false
+
+    - name: Install the InfluxData archive key
+      shell: cat /tmp/influxdata-archive_compat.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
+      when: checksum_result is succeeded
+
+    - name: Create InfluxData repository file
+      copy:
+        dest: /etc/apt/sources.list.d/influxdata.list
+        content: "deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg] https://repos.influxdata.com/debian stable main"
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install InfluxDB
+      apt:
+        name: influxdb2
+        state: present
+
+    - name: Start InfluxDB service
+      service:
+        name: influxdb
+        state: started
+        enabled: yes
+
+    - name: Install UFW
+      apt:
+        name: ufw
+        state: present
+
+    - name: Allow port 8086 through UFW
+      ufw:
+        rule: allow
+        port: 8086
+        proto: tcp
+
+    - name: Run influx setup
+      shell: "{{ influx_setup_script }}"
+      
+- name: Run Grafana setup
+  hosts: Master_Node
+  become: true
+  become_method: sudo
+  vars:
+    ansible_become_pass: "{{ password }}"
+  tasks:
+    - name: Install prerequisites
+      apt:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - apt-transport-https
+        - software-properties-common
+        - wget
+
+    - name: Create directory
+      file:
+        path: /etc/apt/keyrings/
+        state: directory
+
+    - name: Download GPG key
+      get_url:
+        url: https://apt.grafana.com/gpg.key
+        dest: /tmp/grafana.gpg.key
+
+    - name: Download GPG key
+      get_url:
+        url: https://apt.grafana.com/gpg.key
+        dest: /etc/apt/keyrings/grafana.gpg
+
+    - name: Add Grafana repository
+      lineinfile:
+        path: /etc/apt/sources.list.d/grafana.list
+        line: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+        create: yes
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install Grafana
+      apt:
+        name: grafana
+        state: present
+
+- name: Install and Configure OpenLDAP Server non-interactively
+  hosts: Master_Node
+  become: yes
+  vars:
+    ansible_become_pass: "{{ password }}"
+  tasks:
+    - name: Ensure dpkg is in a consistent state
+      ansible.builtin.command:
+        cmd: dpkg --configure -a
+      become: true
+
+    - name: Install debconf-utils for non-interactive configuration
+      ansible.builtin.apt:
+        name: debconf-utils
+        state: present
+
+    - name: Preseed slapd configurations non-interactively
+      ansible.builtin.shell: |
+        echo "slapd slapd/internal/generated_adminpw password {{ ldap_password }}" | debconf-set-selections
+        echo "slapd slapd/internal/adminpw password {{ ldap_password }}" | debconf-set-selections
+        echo "slapd slapd/password2 password {{ ldap_password }}" | debconf-set-selections
+        echo "slapd slapd/password1 password {{ ldap_password }}" | debconf-set-selections
+        echo "slapd slapd/domain string {{ ldap_domain }}" | debconf-set-selections
+        echo "slapd shared/organization string {{ ldap_organization }}" | debconf-set-selections
+        echo "slapd slapd/backend select MDB" | debconf-set-selections
+        echo "slapd slapd/purge_database boolean true" | debconf-set-selections
+        echo "slapd slapd/move_old_database boolean true" | debconf-set-selections
+        echo "slapd slapd/allow_ldap_v2 boolean false" | debconf-set-selections
+        echo "slapd slapd/no_configuration boolean false" | debconf-set-selections
+      become: yes
+      when: slapd_preseed | default(true)
+      
+    - name: Install OpenLDAP and required packages
+      ansible.builtin.apt:
+        name: 
+          - slapd
+          - ldap-utils
+        state: present
+      
+    - name: Ensure slapd is reconfigured non-interactively (if necessary)
+      ansible.builtin.shell: |
+        echo "slapd slapd/no_configuration boolean false" | debconf-set-selections
+        sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure slapd
+      when: ldap_reconfigure | default(false)
+
+    - name: Ensure OpenLDAP is running
+      ansible.builtin.service:
+        name: slapd
+        state: started
+        enabled: yes
+
+- name: Install and configure phpLDAPadmin
+  hosts: Master_Node
+  become: yes
+  vars:
+    ansible_become_pass: "{{ password }}"
+  tasks:
+    - name: Install required packages
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - apache2
+        - wget
+        - phpldapadmin
+
+    - name: Download phpLDAPadmin deb package
+      ansible.builtin.get_url:
+        url: "http://archive.ubuntu.com/ubuntu/pool/universe/p/phpldapadmin/phpldapadmin_1.2.6.3-0.3_all.deb"
+        dest: "/tmp/phpldapadmin_1.2.6.3-0.3_all.deb"
+
+    - name: Install phpLDAPadmin deb package
+      ansible.builtin.apt:
+        deb: "/tmp/phpldapadmin_1.2.6.3-0.3_all.deb"
+    
+    - name: Fix broken dependencies
+      ansible.builtin.shell:
+        cmd: apt-get -f install -y
+      become: yes
+
+    - name: Update phpLDAPadmin configuration
+      ansible.builtin.lineinfile:
+        path: /etc/phpldapadmin/config.php
+        state: present
+        backrefs: no
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - regexp: "\\$servers->setValue\\('server','host','127\\.0\\.0\\.1'\\);"
+          line: "$servers->setValue('server','host','{{ ldap_hostname }}');"
+        - regexp: "\\$servers->setValue\\('server','base',array\\('dc=example,dc=com'\\)\\);"
+          line: "$servers->setValue('server','base',array('{{ ldap_dn }}'));"
+        - regexp: "\\$servers->setValue\\('login','bind_id','cn=admin,dc=example,dc=com'\\);"
+          line: "$servers->setValue('login','bind_id','{{ ldap_admin_dn }}');"
+        - regexp: "^\\/\\/ \\$config->custom->appearance\\['hide_template_warning'\\] = false;"
+          line: "$config->custom->appearance['hide_template_warning'] = true;"
+
+    - name: Restart Apache to apply changes
+      ansible.builtin.service:
+        name: apache2
+        state: restarted
+
+- name: Intialize base Ldap Structure
+  hosts: Master_Node
+  become: yes
+  vars:
+    ansible_become_pass: "{{ password }}"
+  tasks:
+    - name: Add LDAP base structure using expect
+      expect:
+        command: "ldapadd -x -W -D {{ ldap_admin_dn }} -f {{ main_directory }}/Big-Data-Platform/Infra/ldap-base-starcture.ldif"
+        responses:
+          (?i)password: "{{ ldap_password }}"

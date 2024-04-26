@@ -1,0 +1,16 @@
+---
+- name: Run Python Scripts
+  hosts: Master_Node
+  become: yes
+  become_method: sudo
+  become_user: "{{ unix_user }}"
+  vars:
+    ansible_become_pass: "{{ password }}"
+  tasks:
+    - name: Execute Python scripts
+      command: python3 "/home/{{ unix_user }}/Big-Data-Platform/Infra/config_automation/{{ item }}"
+      with_items:
+        - "streamingtools.py"
+        - "prometheus.py"
+
+      

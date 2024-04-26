@@ -1,0 +1,72 @@
+---
+- name: Install Python packages
+  hosts: Scaling
+  become: yes
+  become_method: sudo
+  vars:
+    user: "{{ unix_user }}"
+    ansible_become_pass: "{{ password }}"
+  tasks:
+    - name: Install openjdk-8-jdk-headless
+      apt:
+        name: openjdk-8-jdk-headless
+        state: latest
+      register: java_install_result
+
+    - name: Install zip package
+      apt:
+        name: zip
+        state: latest
+      register: zip_install_result
+
+    - name: Install python3-pip package
+      apt:
+        name: python3-pip
+        state: latest
+      register: pip_install_result
+
+    - name: Read the content of requirements.txt
+      slurp:
+        src: /usr/local/Big-Data-Platform/Infra/requirements.txt
+      register: requirements_content
+
+    - name: Convert the content to a list of package names
+      set_fact:
+        packages_content: "{{ requirements_content['content'] | b64decode | string }}"
+      when: requirements_content['content'] is defined
+
+    - name: Split package names into a list
+      set_fact:
+        packages_to_install: "{{ packages_content.split('\n') }}"
+      when: packages_content is defined
+
+    - name: Install Python packages using pip
+      command: /usr/bin/pip3 install "{{ item }}"
+      register: pip_install_result
+      failed_when: False
+      ignore_errors: yes
+      with_items: "{{ packages_to_install }}"
+
+    - name: Install Redis server
+      apt:
+        name: redis-server
+        state: latest
+      register: redis_install_result
+
+    - name: Update Redis configuration file
+      ansible.builtin.lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^bind 127.0.0.1 ::1'
+        line: 'bind 0.0.0.0'
+
+    - name: restart redis
+      ansible.builtin.service:
+        name: redis
+        state: restarted
+
+    - name: Display installation results
+      debug:
+        msg: |
+          - java installation result: {{ java_install_result }}
+          - zip installation result: {{ zip_install_result }}
+          - python3-pip installation result: {{ pip_install_result }}

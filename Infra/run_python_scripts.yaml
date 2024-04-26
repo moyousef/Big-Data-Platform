@@ -1,0 +1,156 @@
+---
+- name: Intialize Airflow
+  hosts: Master_Node
+  become: yes
+  become_method: sudo
+  become_user: "{{ unix_user }}"
+  vars:
+    ansible_become_pass: "{{ password }}"
+    target_directory: "{{ hadoop_cluster }}"
+    main_directory: "{{ main_directory }}"
+  tasks:
+    - name: Execute Python scripts
+      shell: python3 "{{ main_directory }}/Big-Data-Platform/Infra/config_automation/updatebash.py"
+
+    - name: Create Airflow Directory
+      file:
+        path: "{{ main_directory }}/airflow"
+        state: directory
+        owner: "{{ unix_user }}"
+        group: "{{ unix_group }}"
+        mode: '0755'
+      become: yes
+
+    - name: Initialize Airflow
+      command: airflow db init
+
+- name: Run Python Scripts
+  hosts: Master_Node
+  become: yes
+  become_method: sudo
+  become_user: "{{ unix_user }}"
+  vars:
+    ansible_become_pass: "{{ password }}"
+    target_directory: "{{ hadoop_cluster }}"
+    main_directory: "{{ main_directory }}"
+  tasks:
+    - name: Execute Python scripts
+      command: python3 "/usr/local/Big-Data-Platform/Infra/config_automation/{{ item }}"
+      with_items:
+        - "hadoop.py"
+        - "hive.py"
+        - "streamingtools.py"
+        - "airflow.py"
+        - "prometheus.py"
+        - "spark.py"  
+        - "ranger.py"
+
+    - name: Check if task has already run
+      stat:
+        path: "{{ target_directory }}/temp/hive_airflow_flag"
+      register: flag_check
+
+    - name: Intialize Hive
+      command: "{{ target_directory }}/apache-hive-3.1.3-bin/bin/schematool --dbType mysql --initSchema"
+      environment:
+        HADOOP_HOME: "{{ target_directory }}/hadoop-3.3.5"
+      when: flag_check.stat.exists == false
+
+    - name: Airflow User
+      shell: "yes | airflow db reset && airflow users create --username {{ airflow_username }} --password {{ airflow_password }} --firstname {{ airflow_firstname }} --lastname {{ airflow_lastname }} --role {{ airflow_role }} --email {{ airflow_email }}"
+      environment:
+        AIRFLOW_HOME: "{{ main_directory }}/airflow"
+      when: flag_check.stat.exists == false
+
+    - name: Delete Ranger Admin Conf Directory
+      shell: "rm -rf {{ target_directory }}/ranger/target/ranger-3.0.0-SNAPSHOT-admin/conf"
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Setup Ranger Admin
+      shell: "cd {{ target_directory }}/ranger/target/ranger-3.0.0-SNAPSHOT-admin && ./setup.sh"
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Start Ranger Admin
+      shell: "ranger-admin start"
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Start Ranger HDFS Plugin
+      shell: "{{ target_directory }}/ranger/target/ranger-3.0.0-SNAPSHOT-hdfs-plugin/enable-hdfs-plugin.sh"
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Start Ranger HDFS Plugin
+      shell: "{{ target_directory }}/ranger/target/ranger-3.0.0-SNAPSHOT-hive-plugin/enable-hive-plugin.sh"
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Delete Ranger UserSync Conf Directory and jks
+      shell: "rm -rf {{ target_directory }}/ranger/target/ranger-3.0.0-SNAPSHOT-usersync/conf && rm {{ target_directory }}/ranger/target/ranger-3.0.0-SNAPSHOT-usersync/confunixauthservice.jks"
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Setup Ranger UserSync
+      shell: "cd {{ target_directory }}/ranger/target/ranger-3.0.0-SNAPSHOT-usersync && ./setup.sh"
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Run usersync.py
+      shell: python3 "{{ main_directory }}/Big-Data-Platform/Infra/config_automation/usersync.py"
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Start Ranger UserSync
+      shell: "ranger-usersync start"
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Create flag file to indicate task has run
+      shell: echo "true" > "{{ target_directory }}/temp/hive_airflow_flag"
+      when: flag_check.stat.exists == false
+      
+- name: Format Hadoop Namenode and Datanode
+  hosts: Scaling
+  become: yes
+  become_method: sudo
+  become_user: "{{ unix_user }}"
+  vars:
+    ansible_become_pass: "{{ password }}"
+    target_directory: "{{ hadoop_cluster }}"
+  tasks:
+    - name: Initialize Hadoop Namenode
+      become: yes
+      ansible.builtin.shell: "yes | {{ target_directory }}/hadoop-3.3.5/bin/hdfs namenode -format"
+      args:
+        warn: no
+
+    - name: Initialize Hadoop Datanode
+      become: yes
+      ansible.builtin.shell: "yes | {{ target_directory }}/hadoop-3.3.5/bin/hdfs datanode -format"
+      ignore_errors: yes
+
+- name: Move Hostnames
+  hosts: Master_Node
+  become: yes
+  become_method: sudo
+  become_user: "{{ unix_user }}"
+  vars:
+    ansible_become_pass: "{{ password }}"
+  tasks:
+    - name: Move Hostnames
+      command: python3 "{{ main_directory }}/Big-Data-Platform/Infra/config_automation/{{ item }}"
+      with_items:
+        - "move_scaling.py"
+
+      

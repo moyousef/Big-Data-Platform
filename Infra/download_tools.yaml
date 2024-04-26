@@ -1,0 +1,296 @@
+---
+# - name: Download and Extract Files
+#   hosts: Master_Node
+#   become: yes
+#   become_method: sudo
+#   # become_user: "{{ unix_user }}"
+#   vars:
+#     ansible_become_pass: "{{ password }}"
+#     target_directory: "{{ hadoop_cluster }}"
+#     downlaod_directory: "{{ hadoop_comp }}"
+#     pem_file_path: "~/.ssh/id_rsa"
+#     retries: 3
+#     files_to_download:
+#       - { url: "https://archive.apache.org/dist/hadoop/common/hadoop-3.3.5/hadoop-3.3.5.tar.gz", filename: "hadoop-3.3.5.tar.gz" }
+#       - { url: "https://archive.apache.org/dist/kafka/3.4.0/kafka_2.12-3.4.0.tgz", filename: "kafka_2.12-3.4.0.tgz" }
+#       - { url: "https://dlcdn.apache.org/hive/hive-3.1.3/apache-hive-3.1.3-bin.tar.gz", filename: "apache-hive-3.1.3-bin.tar.gz" }
+#       - { url: "https://archive.apache.org/dist/nifi/1.22.0/nifi-1.22.0-bin.zip", filename: "nifi-1.22.0-bin.zip" }
+#       - { url: "https://dlcdn.apache.org/spark/spark-3.4.3/spark-3.4.3-bin-hadoop3.tgz", filename: "spark-3.4.3-bin-hadoop3.tgz" }
+#       - { url: "https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz", filename: "node_exporter-1.6.1.linux-amd64.tar.gz" }     
+
+#   tasks:
+    # - name: Create target directory
+    #   file:
+    #     path: "{{ target_directory }}"
+    #     state: directory
+    #     owner: "{{ unix_user }}"
+    #     group: "{{ unix_group }}"
+    #     mode: '0755'
+    #   become: yes
+    #   become_user: root
+
+    # - name: Check if task has already run
+    #   stat:
+    #     path: "{{ target_directory }}/temp/down_hadoop_flag"
+    #   register: flag_check
+
+    # - name: Create download directory
+    #   file:
+    #     path: "{{ downlaod_directory }}"
+    #     state: directory
+    #     owner: "{{ unix_user }}"
+    #     group: "{{ unix_group }}"
+    #     mode: '0775'
+    #   become: yes
+    #   become_user: root
+    #   when: flag_check.stat.exists == false
+
+    # - name: Download files
+    #   get_url:
+    #     url: "{{ item.url }}"
+    #     dest: "{{ downlaod_directory }}/{{ item.filename }}"
+    #     owner: "{{ unix_user }}"
+    #     group: "{{ unix_group }}"
+    #     mode: '0644'
+    #   with_items: "{{ files_to_download }}"
+    #   register: download_result
+    #   until: not download_result.failed
+    #   retries: "{{ retries }}"
+    #   when: flag_check.stat.exists == false
+
+    # - name: Create temp directory
+    #   file:
+    #     path: "{{ target_directory }}/temp/"
+    #     state: directory
+    #     owner: "{{ unix_user }}"
+    #     group: "{{ unix_group }}"
+    #     mode: '0755'
+    #   become: yes
+    #   become_user: root
+    #   when: flag_check.stat.exists == false
+
+    # - name: Create flag file to indicate task has run
+    #   shell: echo "true" > "{{ target_directory }}/temp/down_hadoop_flag"
+    #   when: flag_check.stat.exists == false
+
+- name: Copy and Extract Files
+  hosts: Scaling
+  become: yes
+  become_user: root
+  # become_user: "{{ unix_user }}"
+  vars:
+    ansible_become_pass: "{{ password }}"
+    target_directory: "{{ hadoop_cluster }}"
+    downlaod_directory: "{{ hadoop_comp }}"
+    pem_file_path: "~/.ssh/id_rsa"
+    retries: 3
+  
+  tasks:
+    - name: Create target directory
+      file:
+        path: "{{ target_directory }}"
+        state: directory
+        owner: "{{ unix_user }}"
+        group: "{{ unix_group }}"
+        mode: '0755'
+      become: yes
+      become_user: root
+
+    - name: Copy directory from control machine to targeted hosts
+      ansible.builtin.copy:
+        src: "{{ downlaod_directory }}"
+        dest: "{{ main_directory }}"
+        remote_src: no
+        owner: "{{ unix_user }}"
+        group: "{{ unix_group }}"
+        mode: '0755'
+        directory_mode: '0755'
+      become: yes
+      become_user: root
+
+    - name: Find tar.gz/tgz files
+      ansible.builtin.find:
+        paths: "{{ downlaod_directory }}"
+        patterns: '*.tar.gz,*.tgz'
+      register: found_files
+
+    - name: Extract tar.gz/tgz files
+      ansible.builtin.unarchive:
+        src: "{{ item.path }}"
+        dest: "{{ target_directory }}"
+        remote_src: yes
+        extra_opts: "--strip-components=0"
+      with_items: "{{ found_files.files }}"
+
+    - name: Find zip files
+      ansible.builtin.find:
+        paths: "{{ downlaod_directory }}"
+        patterns: '*.zip'
+      register: found_files
+
+    - name: Decompress the zip file
+      unarchive:
+        src: "{{ item.path }}"
+        dest: "{{ target_directory }}" 
+        remote_src: yes
+      become: yes
+      with_items: "{{ found_files.files }}"
+
+- name: Download and Extract Master-Node tools only
+  hosts: Master_Node
+  become: yes
+  become_method: sudo
+  become_user: "{{ unix_user }}"
+  vars:
+    ansible_become_pass: "{{ password }}"
+    target_directory: "{{ hadoop_cluster }}"
+    HDFS_Jars: "https://dms.wakeb.tech/index.php/s/oJJWDtAZgMzZKoR/download/hdfs_share_directory_jars.zip"
+    pem_file_path: "~/.ssh/id_rsa"
+    retries: 3
+    files_to_download:
+      - { url: "https://github.com/prometheus/prometheus/releases/download/v2.48.0-rc.0/prometheus-2.48.0-rc.0.linux-amd64.tar.gz", filename: "prometheus-2.48.0-rc.0.linux-amd64.tar.gz" }
+      - { url: "https://github.com/prometheus/alertmanager/releases/download/v0.26.0/alertmanager-0.26.0.linux-amd64.tar.gz", filename: "alertmanager-0.26.0.linux-amd64.tar.gz" }
+      - { url: "https://dlcdn.apache.org/knox/2.0.0/knox-2.0.0.zip", filename: "knox-2.0.0.zip" }
+      - { url: "https://dms.wakeb.tech/index.php/s/Qz3iD5amSEpH7D8/download/ranger_target.tar.gz", filename: "ranger_target.tar.gz" }
+    when: "'master-public' in lookup('ini', 'Scaling type=properties file=/home/{{ unix_user }}/Big-Data-Platform/Infra/inventory.ini')"
+
+  tasks:
+    - name: Check if task has already run
+      stat:
+        path: "{{ target_directory }}/temp/prometheus_flag"
+      register: flag_check
+
+    - name: Create target directory
+      file:
+        path: "{{ target_directory }}"
+        state: directory
+        owner: "{{ unix_user }}"
+        group: "{{ unix_group }}"
+        mode: '0755'
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Download files
+      get_url:
+        url: "{{ item.url }}"
+        dest: "{{ target_directory }}/{{ item.filename }}"
+        owner: "{{ unix_user }}"
+        group: "{{ unix_group }}"
+        mode: '0644'
+      with_items: "{{ files_to_download }}"
+      register: download_result
+      until: not download_result.failed
+      retries: "{{ retries }}"
+      when: flag_check.stat.exists == false
+
+    - name: Extract tar.gz/tgz files
+      ansible.builtin.unarchive:
+        src: "{{ target_directory }}/{{ item.item.filename }}"
+        dest: "{{ target_directory }}"
+        remote_src: yes
+        extra_opts: "--strip-components=0"
+      with_items: "{{ download_result.results }}"
+      when: item.item.filename.endswith(('.tar.gz', '.tgz')) and not flag_check.stat.exists
+
+    - name: Decompress the zip file
+      unarchive:
+        src: "{{ target_directory }}/{{ item.item.filename }}"
+        dest: "{{ target_directory }}"
+        remote_src: yes
+      become: yes
+      with_items: "{{ download_result.results }}"
+      when: item.item.filename.endswith(('.zip')) and not flag_check.stat.exists
+
+    - name: Create Ranger directory
+      file:
+        path: "{{ target_directory }}/ranger"
+        state: directory
+        owner: "{{ unix_user }}"
+        group: "{{ unix_group }}"
+        mode: '0755'
+      become: yes
+      become_user: root
+      when: flag_check.stat.exists == false
+
+    - name: Move target into Ranger
+      shell: "mv {{ target_directory }}/target {{ target_directory }}/ranger"
+      become: yes
+      become_user: root
+
+    - name: Download HDFS Jars
+      become_user: "{{ user }}"
+      become: yes
+      ansible.builtin.shell: "wget {{ HDFS_Jars }} -P {{ target_directory }}/hadoop-3.3.5/share/hadoop/common/lib"
+      register: wget_result
+
+    - name: Decompress the zip file
+      unarchive:
+        src: "{{ target_directory }}/hadoop-3.3.5/share/hadoop/common/lib/hdfs_share_directory_jars.zip"
+        dest: "{{ target_directory }}/hadoop-3.3.5/share/hadoop/common/lib"
+        remote_src: yes
+      become: yes
+
+    - name: Create temp directory
+      file:
+        path: "{{ target_directory }}/temp/"
+        state: directory
+        owner: "{{ unix_user }}"
+        group: "{{ unix_group }}"
+        mode: '0755'
+      become: yes
+      when: flag_check.stat.exists == false
+
+    - name: Create flag file to indicate task has run
+      shell: echo "true" > "{{ target_directory }}/temp/prometheus_flag"
+      when: flag_check.stat.exists == false
+
+- name: Configure Hive
+  hosts: Scaling
+  become: yes
+  become_method: sudo
+  vars:
+    ansible_become_pass: "{{ password }}"
+    user: "{{ unix_user }}"
+    target_directory: "{{ hadoop_cluster }}"
+    pem_file_path: "~/.ssh/id_rsa"
+    hive_dir: "{{ target_directory }}/apache-hive-3.1.3-bin"
+    mysql_con: "https://dev.mysql.com/get/Downloads/Connector-J/mysql-connector-j_8.1.0-1ubuntu22.04_all.deb"
+    jar_dir: "/usr/share/java/mysql-connector-java-8.1.0.jar"
+    retries: 3
+
+  tasks:
+    - name: Set mode and owner for the target directory
+      file:
+        path: "{{ target_directory }}"
+        state: directory
+        owner: "{{ unix_user }}"
+        group: "{{ unix_group }}"
+        mode: '0755'
+      become: yes
+      become_user: root
+
+    - name: Copy Hive configuration file
+      command: "cp {{ main_directory }}/Big-Data-Platform/Infra/hive-site.xml {{ hive_dir }}/conf/hive-site.xml"
+
+    - name: Copy Hive environment file
+      command: "cp {{ hive_dir }}/conf/hive-env.sh.template {{ hive_dir }}/conf/hive-env.sh"
+
+    - name: Download MySQL Connector .DEB
+      become_user: "{{ user }}"
+      become: yes
+      ansible.builtin.shell: "wget {{ mysql_con }} -P {{ main_directory }}"
+      register: wget_result
+
+    - name: Install MySQL Connector .DEB with dpkg
+      become: yes
+      become_method: sudo
+      become_user: root
+      apt:
+        deb: "{{ main_directory}}/mysql-connector-j_8.1.0-1ubuntu22.04_all.deb"
+        update_cache: yes
+
+    - name: Copy MySQL Connector JAR to Hive lib directory
+      copy:
+        src: "{{ jar_dir }}"
+        dest: "{{ hive_dir }}/lib/mysql-connector-java-8.1.0.jar"

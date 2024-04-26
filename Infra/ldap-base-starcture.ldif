@@ -1,0 +1,49 @@
+dn: ou=groups,dc=master,dc=com
+objectClass: organizationalUnit
+ou: groups
+description: Container for group entries
+
+dn: ou=users,dc=master,dc=com
+objectClass: organizationalUnit
+ou: users
+description: Container for user entries
+
+dn: cn=cluster,ou=groups,dc=master,dc=com
+objectClass: posixGroup
+objectClass: top
+cn: cluster
+gidNumber: 500
+description: Cluster group
+
+dn: cn=user,ou=groups,dc=master,dc=com
+objectClass: posixGroup
+objectClass: top
+cn: user
+gidNumber: 501
+description: User group
+
+dn: cn=admin,ou=groups,dc=master,dc=com
+objectClass: posixGroup
+objectClass: top
+cn: admin
+gidNumber: 502
+description: Admin group
+
+dn: uid=twakeb,ou=users,dc=master,dc=com
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: top
+cn: test wakeb
+sn: wakeb
+uid: twakeb
+uidNumber: 1001
+gidNumber: 500
+homeDirectory: /home/twakeb
+loginShell: /bin/bash
+mail: testwakeb@example.com
+userPassword: {SSHA}59S4JyYPHLyCmMgeXQd2J8bAElc6OhTx
+
+dn: cn=cluster,ou=groups,dc=master,dc=com
+changetype: modify
+add: memberUid
+memberUid: twakeb

@@ -1,0 +1,59 @@
+---
+- name: Install and Configure Nscd Client non-interactively
+  hosts: Scaling
+  become: yes
+  vars:
+    ansible_become_pass: "{{ password }}"
+  tasks:
+    - name: Pre-configure ldap-auth-config
+      ansible.builtin.shell: |
+        echo "ldap-auth-config ldap-auth-config/ldap-server string {{ ldap_uri }}" | debconf-set-selections
+        echo "ldap-auth-config ldap-auth-config/ldapns/ldap-server string {{ ldap_uri }}" | debconf-set-selections
+        echo "ldap-auth-config ldap-auth-config/ldapns/base-dn string {{ ldap_dn }}" | debconf-set-selections
+        echo "ldap-auth-config ldap-auth-config/dbrootlogin boolean true" | debconf-set-selections
+        echo "ldap-auth-config ldap-auth-config/dblogin boolean false" | debconf-set-selections
+        echo "ldap-auth-config ldap-auth-config/binddn string {{ ldap_admin_dn }}" | debconf-set-selections
+        echo "ldap-auth-config ldap-auth-config/rootbinddn string {{ ldap_admin_dn }}" | debconf-set-selections
+        echo "ldap-auth-config ldap-auth-config/bindpw password {{ ldap_password }}" | debconf-set-selections
+        echo "ldap-auth-config ldap-auth-config/rootbindpw password {{ ldap_password }}" | debconf-set-selections
+        echo "ldap-auth-config ldap-auth-config/ldapns/ldap_version select 3" | debconf-set-selections
+      become: yes
+
+    - name: Install libpam-ldap and nscd non-interactively
+      ansible.builtin.apt:
+        name:
+          - libpam-ldap
+          - nscd
+        state: present
+        update_cache: yes
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      become: yes
+
+    - name: Update nsswitch configuration
+      ansible.builtin.lineinfile:
+        path: /etc/nsswitch.conf
+        state: present
+        backrefs: no
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - regexp: "passwd:         files systemd"
+          line: "passwd:         files ldap"
+        - regexp: "group:          files systemd"
+          line: "group:         files ldap"
+        - regexp: "shadow:         files"
+          line: "shadow:         files ldap"
+        - regexp: "gshadow:        files"
+          line: "gshadow:         files ldap"
+
+    - name: Append to common-session configuration
+      ansible.builtin.lineinfile:
+        path: /etc/pam.d/common-session
+        line: 'session required        pam_mkhomedir.so skel=/etc/skel umask=0022'
+        state: present
+
+    - name: Start nscd
+      shell: "/etc/init.d/nscd start"
+      become: yes
+      become_user: root
